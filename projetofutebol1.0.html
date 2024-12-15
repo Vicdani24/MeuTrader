@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jogos e Análises - Próximas 24 Horas</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-image: url('nova.jpeg');
+      background-size: cover;
+      background-position: center;
+      color: #fff;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    h1 {
+      text-align: center;
+      color: #fff;
+      font-size: 2.5em;
+      margin-bottom: 20px;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
+    }
+    #games {
+      margin-top: 20px;
+      width: 80%;
+      max-width: 1000px;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+      color: #fff;
+    }
+    .game {
+      padding: 15px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      background: rgba(255, 255, 255, 0.2);
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    }
+    .game p {
+      margin: 5px 0;
+    }
+    .loader {
+      text-align: center;
+      font-size: 1.2em;
+      color: #fff;
+    }
+    button {
+      background-color: #0044cc;
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      font-size: 1.2em;
+      cursor: pointer;
+      border-radius: 5px;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #0033aa;
+    }
+  </style>
+</head>
+<body>
+  <h1>Jogos e Análises - Próximas 24 Horas</h1>
+  <button id="load-games">Carregar Jogos das Próximas 24 Horas</button>
+  <div id="games" class="loader">Clique no botão acima para carregar os jogos.</div>
+
+  <script>
+    const apiKey = "eec454bd8e0651ad7b01e6a08e9bf96b"; // Substitua pela sua chave API válida
+    const apiUrl = "https://v3.football.api-sports.io/fixtures";
+    const gameCount = 10; // Número de jogos anteriores a serem recuperados
+
+    const headers = {
+      "X-RapidAPI-Host": "v3.football.api-sports.io",
+      "X-RapidAPI-Key": apiKey
+    };
+
+    async function fetchGamesForNext24Hours() {
+      const gamesDiv = document.getElementById("games");
+      gamesDiv.innerHTML = "<p class='loader'>Carregando jogos...</p>";
+
+      try {
+        const now = new Date();
+        const in24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+        const datesToFetch = getDatesBetween(now, in24Hours);
+        let allFixtures = [];
+
+        // Buscar jogos para cada data no intervalo
+        for (const date of datesToFetch) {
+          const formattedDate = date.toISOString().split("T")[0]; // YYYY-MM-DD
+          const response = await fetch(`${apiUrl}?date=${formattedDate}`, { headers });
+
+          if (!response.ok) {
+            throw new Error(`Erro HTTP: ${response.status}`);
+          }
+
+          const data = await response.json();
+          if (data.response) {
+            allFixtures = allFixtures.concat(data.response);
+          }
+        }
+
+        // Filtrar fixtures dentro das próximas 24 horas
+        const filteredFixtures = allFixtures.filter(fixture => {
+          const fixtureDate = new Date(fixture.fixture.date);
+          return fixtureDate >= now && fixtureDate <= in24Hours;
+        });
+
+        if (filteredFixtures.length === 0) {
+          gamesDiv.innerHTML = "<p>Não há jogos nas próximas 24 horas.</p>";
+          return;
+        }
+
+        // Limpar o container
+        gamesDiv.innerHTML = "";
+
+        for (const fixture of filteredFixtures) {
+          const homeTeamId = fixture.teams.home.id;
+          const awayTeamId = fixture.teams.away.id;
+
+          const homeLastMatches = await fetchTeamLastMatches(homeTeamId);
+          const awayLastMatches = await fetchTeamLastMatches(awayTeamId);
+
+          if (homeLastMatches.length === 0 || awayLastMatches.length === 0) continue;
+
+          const homeMarkets = analyzeMarkets(homeLastMatches);
+          const awayMarkets = analyzeMarkets(awayLastMatches);
+
+          const combinedMarkets = mergeMarkets(homeMarkets, awayMarkets);
+
+          if (combinedMarkets.length > 0) {
+            const gameDiv = document.createElement("div");
+            gameDiv.className = "game";
+            gameDiv.innerHTML = `
+              <p><strong>${fixture.league.name} (${fixture.league.country})</strong></p>
+              <p>${fixture.teams.home.name} vs ${fixture.teams.away.name}</p>
+              <p>Horário: ${new Date(fixture.fixture.date).toLocaleString()}</p>
+              <h4>Últimos 10 Jogos - ${fixture.teams.home.name}:</h4>
+              <ul>
+                ${homeLastMatches.map(match => `<li>${match.teams.home.name} ${match.goals.home} - ${match.goals.away} ${match.teams.away.name}</li>`).join('')}
+              </ul>
+              <h4>Últimos 10 Jogos - ${fixture.teams.away.name}:</h4>
+              <ul>
+                ${awayLastMatches.map(match => `<li>${match.teams.home.name} ${match.goals.home} - ${match.goals.away} ${match.teams.away.name}</li>`).join('')}
+              </ul>
+              <h4>Mercados Frequentes (70%+):</h4>
+              <p>${combinedMarkets.join(', ')}</p>
+            `;
+            gamesDiv.appendChild(gameDiv);
+          }
+        }
+
+        // Se nenhum jogo tiver mercados frequentes
+        if (gamesDiv.innerHTML === "") {
+          gamesDiv.innerHTML = "<p>Não há jogos com mercados frequentes nas próximas 24 horas.</p>";
+        }
+
+      } catch (error) {
+        console.error("Erro ao buscar os jogos:", error);
+        gamesDiv.innerHTML = "<p>Erro ao carregar os jogos. Tente novamente mais tarde.</p>";
+      }
+    }
+
+    // Função para obter todas as datas entre duas datas
+    function getDatesBetween(startDate, endDate) {
+      const dates = [];
+      let currentDate = new Date(startDate);
+      while (currentDate <= endDate) {
+        dates.push(new Date(currentDate));
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+      return dates;
+    }
+
+    async function fetchTeamLastMatches(teamId) {
+      try {
+        const response = await fetch(`${apiUrl}?team=${teamId}&status=FT&last=${gameCount}`, { headers });
+        if (!response.ok) {
+          throw new Error(`Erro ao buscar os últimos jogos do time ${teamId}: ${response.status}`);
+        }
+        const data = await response.json();
+        return data.response || [];
+      } catch (error) {
+        console.error("Erro ao buscar os últimos jogos:", error);
+        return [];
+      }
+    }
+
+    function analyzeMarkets(matches) {
+      const marketCounts = { "+1.5": 0, "+2.5": 0, "Ambos Marcam": 0 };
+      matches.forEach(match => {
+        if (match.goals.home + match.goals.away >= 2) marketCounts["+1.5"]++;
+        if (match.goals.home + match.goals.away >= 3) marketCounts["+2.5"]++;
+        if (match.goals.home > 0 && match.goals.away > 0) marketCounts["Ambos Marcam"]++;
+      });
+
+      return Object.entries(marketCounts)
+        .filter(([_, count]) => (count / matches.length) >= 0.7)
+        .map(([market]) => market);
+    }
+
+    function mergeMarkets(homeMarkets, awayMarkets) {
+      const allMarkets = new Set([...homeMarkets, ...awayMarkets]);
+      return Array.from(allMarkets);
+    }
+
+    document.getElementById("load-games").addEventListener("click", fetchGamesForNext24Hours);
+  </script>
+</body>
+</html>
